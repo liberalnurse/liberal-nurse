@@ -1,0 +1,102 @@
+{
+  "app": {
+    "name": "Liberal Nurse",
+    "tagline": "Votre cabinet, simplifié"
+  },
+  "nav": {
+    "dashboard": "Tableau de bord",
+    "patients": "Patients",
+    "planning": "Planning",
+    "itineraire": "Itinéraire",
+    "soins": "Notes de soins",
+    "transmissions": "Transmissions",
+    "sms": "SMS",
+    "messagerie": "Messagerie",
+    "contrats": "Contrats",
+    "retrocessions": "Rétrocessions",
+    "remplacantes": "Remplaçantes",
+    "secretaire": "Secrétariat",
+    "statistiques": "Statistiques",
+    "notifications": "Notifications",
+    "securite": "Sécurité",
+    "stock": "Stock matériel",
+    "fiches": "Fiches soins",
+    "facturation": "Facturation",
+    "admin": "Administration"
+  },
+  "auth": {
+    "login": "Connexion",
+    "logout": "Déconnexion",
+    "register": "Créer un compte",
+    "email": "Adresse e-mail",
+    "password": "Mot de passe",
+    "forgotPassword": "Mot de passe oublié ?",
+    "resetPassword": "Réinitialiser le mot de passe",
+    "noAccount": "Pas encore de compte ?",
+    "hasAccount": "Déjà un compte ?"
+  },
+  "roles": {
+    "admin": "Administrateur",
+    "titulaire": "Infirmière titulaire",
+    "collaboratrice": "Collaboratrice",
+    "remplacante": "Remplaçante",
+    "stagiaire": "Stagiaire",
+    "coordinatrice_had": "Coordinatrice HAD",
+    "secretaire": "Secrétaire",
+    "medecin_partenaire": "Médecin partenaire"
+  },
+  "common": {
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "delete": "Supprimer",
+    "edit": "Modifier",
+    "add": "Ajouter",
+    "search": "Rechercher",
+    "filter": "Filtrer",
+    "export": "Exporter",
+    "loading": "Chargement...",
+    "error": "Une erreur est survenue",
+    "success": "Opération réussie",
+    "confirm": "Confirmer",
+    "back": "Retour",
+    "next": "Suivant",
+    "previous": "Précédent",
+    "close": "Fermer",
+    "yes": "Oui",
+    "no": "Non",
+    "noData": "Aucune donnée"
+  },
+  "patients": {
+    "title": "Patients",
+    "add": "Nouveau patient",
+    "name": "Nom",
+    "firstName": "Prénom",
+    "birthDate": "Date de naissance",
+    "address": "Adresse",
+    "phone": "Téléphone",
+    "nir": "Numéro de sécurité sociale",
+    "mutuelle": "Mutuelle",
+    "medecin": "Médecin traitant",
+    "notes": "Notes"
+  },
+  "planning": {
+    "title": "Planning",
+    "today": "Aujourd'hui",
+    "week": "Semaine",
+    "month": "Mois",
+    "addVisit": "Ajouter une visite",
+    "visit": "Visite",
+    "morning": "Matin",
+    "afternoon": "Après-midi",
+    "evening": "Soir"
+  },
+  "errors": {
+    "required": "Ce champ est obligatoire",
+    "email": "Adresse e-mail invalide",
+    "minLength": "Minimum {{count}} caractères",
+    "maxLength": "Maximum {{count}} caractères",
+    "unauthorized": "Accès non autorisé",
+    "notFound": "Page introuvable",
+    "serverError": "Erreur serveur"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx vite:*)",
+      "Bash(npm run:*)",
+      "Bash(npm install:*)",
+      "Bash(node -e \"require\\(''react-leaflet''\\); console.log\\(''ok''\\)\")",
+      "Bash(grep -A2 '\"\"react-leaflet\"\"' /Users/admin/liberal-nurse/liberal-nurse/package.json)",
+      "Bash(node:*)",
+      "Bash(brew --version)",
+      "Bash(git init:*)",
+      "Bash(git add:*)"
+    ]
+  }
+}
