@@ -1,5 +1,5 @@
 // Planning mensuel — Calendrier Cabinet avec assignation infirmières T1/T2/T3
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { clsx } from 'clsx'
 import {
   startOfMonth, endOfMonth, startOfWeek, endOfWeek,
@@ -11,17 +11,23 @@ import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/store/authStore'
 import { useUIStore } from '@/store/uiStore'
 
-// ─── Palette de couleurs infirmières ──────────────────────────────────────────
+// ─── Palette ──────────────────────────────────────────────────────────────────
 
 const PALETTE: { cls: string; hex: string }[] = [
-  { cls: 'bg-blue-500',     hex: '#3b82f6' },
-  { cls: 'bg-violet-500',   hex: '#8b5cf6' },
-  { cls: 'bg-emerald-500',  hex: '#10b981' },
-  { cls: 'bg-red-500',      hex: '#ef4444' },
-  { cls: 'bg-orange-500',   hex: '#f97316' },
-  { cls: 'bg-pink-500',     hex: '#ec4899' },
-  { cls: 'bg-yellow-500',   hex: '#eab308' },
+  { cls: 'bg-blue-500',    hex: '#3b82f6' },
+  { cls: 'bg-violet-500',  hex: '#8b5cf6' },
+  { cls: 'bg-emerald-500', hex: '#10b981' },
+  { cls: 'bg-red-500',     hex: '#ef4444' },
+  { cls: 'bg-orange-500',  hex: '#f97316' },
+  { cls: 'bg-pink-500',    hex: '#ec4899' },
+  { cls: 'bg-yellow-500',  hex: '#eab308' },
 ]
+
+// Couleur stable par ID (hash simple)
+function paletteForId(id: string) {
+  const hash = id.split('').reduce((a, c) => a + c.charCodeAt(0), 0)
+  return PALETTE[hash % PALETTE.length]
+}
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -33,28 +39,28 @@ interface Nurse {
   id: string
   firstName: string
   lastName: string
-  initials: string   // 2 premières lettres du nom de famille, ex: "LE"
-  colorCls: string   // classe Tailwind
-  colorHex: string   // hex pour inline style
+  initials: string
+  colorCls: string
+  colorHex: string
 }
 
 interface Assignment {
   id: string
   infirmiere_id: string
-  date: string       // 'yyyy-MM-dd'
+  date: string
   tournee: Tournee
 }
 
 type AssignMap = Record<string, Record<Tournee, Assignment[]>>
 
-// ─── Helper : construire un Nurse depuis un row Supabase ──────────────────────
+// ─── Helper ───────────────────────────────────────────────────────────────────
 
-function makeNurse(raw: { id: string; full_name: string }, idx: number): Nurse {
+function makeNurse(raw: { id: string; full_name: string }): Nurse {
   const parts     = raw.full_name.trim().split(/\s+/)
   const firstName = parts[0] ?? ''
   const lastName  = parts.slice(1).join(' ')
   const initials  = (lastName || firstName).substring(0, 2).toUpperCase()
-  const { cls, hex } = PALETTE[idx % PALETTE.length]
+  const { cls, hex } = paletteForId(raw.id)
   return { id: raw.id, firstName, lastName, initials, colorCls: cls, colorHex: hex }
 }
 
@@ -81,16 +87,226 @@ function buildDemoAssignments(): Assignment[] {
     const d = addDays(today, off)
     if (d.getDay() === 0) continue
     const p = patterns[((off + 20) % patterns.length + patterns.length) % patterns.length]
-    for (const [nurseId, tournee] of p) {
+    for (const [nurseId, tournee] of p)
       items.push({ id: `d${n++}`, infirmiere_id: nurseId, date: format(d, 'yyyy-MM-dd'), tournee })
-    }
   }
   return items
 }
 
 const DEMO_ASSIGNMENTS = buildDemoAssignments()
 
-// ─── Sous-composant : cellule calendrier ──────────────────────────────────────
+// ─── Exports PDF (lazy jsPDF) ─────────────────────────────────────────────────
+
+async function exportComplet(currentDate: Date, assignMap: AssignMap, nurses: Nurse[]) {
+  const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+    import('jspdf'),
+    import('jspdf-autotable'),
+  ])
+  const doc  = new jsPDF({ orientation: 'landscape' })
+  const mon  = format(currentDate, 'MMMM yyyy', { locale: fr })
+  const days = eachDayOfInterval({ start: startOfMonth(currentDate), end: endOfMonth(currentDate) })
+
+  doc.setFontSize(14)
+  doc.setFont('helvetica', 'bold')
+  doc.text(`Planning Cabinet - ${mon}`, 14, 16)
+
+  const rows = days.map((day) => {
+    const da = assignMap[format(day, 'yyyy-MM-dd')]
+    const names = (t: Tournee) =>
+      (da?.[t] ?? []).map((a) => nurses.find((n) => n.id === a.infirmiere_id)?.firstName ?? '').filter(Boolean).join(', ') || '-'
+    return [format(day, 'EEE d MMM', { locale: fr }), names('T1'), names('T2'), names('T3')]
+  })
+
+  autoTable(doc, {
+    head: [['Jour', 'T1', 'T2', 'T3']],
+    body: rows,
+    startY: 24,
+    styles: { fontSize: 8, cellPadding: 2 },
+    headStyles: { fillColor: [15, 45, 92], textColor: 255 },
+    alternateRowStyles: { fillColor: [245, 248, 255] },
+    columnStyles: { 0: { fontStyle: 'bold', cellWidth: 34 } },
+  })
+  doc.save(`planning-complet-${format(currentDate, 'yyyy-MM')}.pdf`)
+}
+
+async function exportParInfirmiere(currentDate: Date, assignMap: AssignMap, nurse: Nurse) {
+  const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+    import('jspdf'),
+    import('jspdf-autotable'),
+  ])
+  const doc  = new jsPDF()
+  const mon  = format(currentDate, 'MMMM yyyy', { locale: fr })
+  const days = eachDayOfInterval({ start: startOfMonth(currentDate), end: endOfMonth(currentDate) })
+
+  doc.setFontSize(14)
+  doc.setFont('helvetica', 'bold')
+  doc.text(`Planning - ${nurse.firstName} ${nurse.lastName} - ${mon}`, 14, 16)
+
+  const rows = days.flatMap((day) => {
+    const da = assignMap[format(day, 'yyyy-MM-dd')]
+    const ts = TOURNEES.filter((t) => da?.[t]?.some((a) => a.infirmiere_id === nurse.id))
+    return ts.map((t) => [format(day, 'EEE d MMM', { locale: fr }), t])
+  })
+
+  autoTable(doc, {
+    head: [['Jour', 'Tournee']],
+    body: rows.length ? rows : [['Aucune assignation', '']],
+    startY: 24,
+    styles: { fontSize: 9 },
+    headStyles: { fillColor: [15, 45, 92], textColor: 255 },
+    alternateRowStyles: { fillColor: [245, 248, 255] },
+  })
+  doc.save(`planning-${nurse.firstName.toLowerCase()}-${format(currentDate, 'yyyy-MM')}.pdf`)
+}
+
+async function exportParTournee(currentDate: Date, assignMap: AssignMap, nurses: Nurse[], tournee: Tournee) {
+  const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+    import('jspdf'),
+    import('jspdf-autotable'),
+  ])
+  const doc  = new jsPDF()
+  const mon  = format(currentDate, 'MMMM yyyy', { locale: fr })
+  const days = eachDayOfInterval({ start: startOfMonth(currentDate), end: endOfMonth(currentDate) })
+
+  doc.setFontSize(14)
+  doc.setFont('helvetica', 'bold')
+  doc.text(`Planning ${tournee} - ${mon}`, 14, 16)
+
+  const rows = days.map((day) => {
+    const as = assignMap[format(day, 'yyyy-MM-dd')]?.[tournee] ?? []
+    const nms = as.map((a) => nurses.find((n) => n.id === a.infirmiere_id)?.firstName ?? '').filter(Boolean).join(', ')
+    return [format(day, 'EEE d MMM', { locale: fr }), nms || '-']
+  })
+
+  autoTable(doc, {
+    head: [['Jour', 'Infirmieres']],
+    body: rows,
+    startY: 24,
+    styles: { fontSize: 9 },
+    headStyles: { fillColor: [15, 45, 92], textColor: 255 },
+    alternateRowStyles: { fillColor: [245, 248, 255] },
+  })
+  doc.save(`planning-${tournee.toLowerCase()}-${format(currentDate, 'yyyy-MM')}.pdf`)
+}
+
+// ─── Modal PDF ────────────────────────────────────────────────────────────────
+
+function PdfModal({ currentDate, assignMap, nurses, onClose }: {
+  currentDate: Date
+  assignMap: AssignMap
+  nurses: Nurse[]
+  onClose: () => void
+}) {
+  const [nurseId,  setNurseId]  = useState(nurses[0]?.id ?? '')
+  const [tournee,  setTournee]  = useState<Tournee>('T1')
+  const [loading,  setLoading]  = useState<string | null>(null)
+
+  const run = async (key: string, fn: () => Promise<void>) => {
+    setLoading(key)
+    try { await fn() } finally { setLoading(null) }
+    onClose()
+  }
+
+  const nurse = nurses.find((n) => n.id === nurseId) ?? nurses[0]
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
+      <div className="fixed inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900">
+        {/* Header */}
+        <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-800">
+          <h2 className="font-bold text-navy-900 dark:text-white">Export PDF</h2>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">
+            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+
+        <div className="divide-y divide-gray-100 dark:divide-gray-800">
+          {/* Planning complet */}
+          <div className="flex items-center justify-between px-5 py-4">
+            <div>
+              <p className="text-sm font-semibold text-gray-900 dark:text-white">Planning complet</p>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Tout le mois · toutes les infirmières</p>
+            </div>
+            <button
+              onClick={() => run('complet', () => exportComplet(currentDate, assignMap, nurses))}
+              disabled={loading === 'complet'}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-navy-800 px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50 dark:bg-navy-600"
+            >
+              {loading === 'complet' ? '...' : (
+                <>
+                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                  </svg>
+                  PDF
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Par infirmière */}
+          <div className="px-5 py-4 space-y-2">
+            <p className="text-sm font-semibold text-gray-900 dark:text-white">Par infirmière</p>
+            <div className="flex items-center gap-2">
+              <select
+                value={nurseId}
+                onChange={(e) => setNurseId(e.target.value)}
+                className="flex-1 rounded-lg border border-gray-200 bg-white px-2.5 py-1.5 text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200"
+              >
+                {nurses.map((n) => (
+                  <option key={n.id} value={n.id}>{n.firstName} {n.lastName}</option>
+                ))}
+              </select>
+              <button
+                onClick={() => nurse && run('inf', () => exportParInfirmiere(currentDate, assignMap, nurse))}
+                disabled={loading === 'inf' || !nurse}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-navy-800 px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50 dark:bg-navy-600"
+              >
+                {loading === 'inf' ? '...' : 'PDF'}
+              </button>
+            </div>
+          </div>
+
+          {/* Par tournée */}
+          <div className="px-5 py-4 space-y-2">
+            <p className="text-sm font-semibold text-gray-900 dark:text-white">Par tournée</p>
+            <div className="flex items-center gap-2">
+              <div className="flex gap-1">
+                {TOURNEES.map((t) => (
+                  <button
+                    key={t}
+                    onClick={() => setTournee(t)}
+                    className={clsx(
+                      'rounded-lg px-3 py-1.5 text-xs font-bold transition-colors',
+                      tournee === t
+                        ? 'bg-navy-800 text-white dark:bg-navy-600'
+                        : 'border border-gray-200 text-gray-600 hover:bg-gray-50 dark:border-gray-700 dark:text-gray-300',
+                    )}
+                  >
+                    {t}
+                  </button>
+                ))}
+              </div>
+              <button
+                onClick={() => run('t', () => exportParTournee(currentDate, assignMap, nurses, tournee))}
+                disabled={loading === 't'}
+                className="ml-auto inline-flex items-center gap-1.5 rounded-xl bg-navy-800 px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50 dark:bg-navy-600"
+              >
+                {loading === 't' ? '...' : 'PDF'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Cellule calendrier — lignes colorées ─────────────────────────────────────
+
+const MAX_LINES = 4
 
 function DayCell({ day, dayAssign, nurses, filterNurseId, isSelected, isCurrentMonth, onClick }: {
   day: Date
@@ -105,21 +321,24 @@ function DayCell({ day, dayAssign, nurses, filterNurseId, isSelected, isCurrentM
   const isWeekend = day.getDay() === 0 || day.getDay() === 6
   const nurseById = (id: string) => nurses.find((n) => n.id === id)
 
-  // Filtre : grise les jours sans l'infirmière sélectionnée
-  const hasFilteredNurse = filterNurseId
-    ? TOURNEES.some((t) => dayAssign?.[t]?.some((a) => a.infirmiere_id === filterNurseId))
-    : true
+  // Unique nurses assigned this day (across all tournées)
+  const allIds = [...new Set(
+    TOURNEES.flatMap((t) => (dayAssign?.[t] ?? []).map((a) => a.infirmiere_id))
+  )]
+  const filteredIds = filterNurseId ? allIds.filter((id) => id === filterNurseId) : allIds
+  const visibleIds  = filteredIds.slice(0, MAX_LINES)
+  const hasMore     = filteredIds.length > MAX_LINES
 
-  const TOURNEE_COLORS = ['text-blue-600 dark:text-blue-400', 'text-violet-600 dark:text-violet-400', 'text-emerald-600 dark:text-emerald-400']
+  const dimmed = filterNurseId && filteredIds.length === 0
 
   return (
     <button
       onClick={onClick}
       className={clsx(
-        'relative flex min-h-[80px] w-full flex-col items-start border-b border-r border-gray-100 p-1.5 text-left transition-colors dark:border-gray-800',
+        'relative flex min-h-[74px] w-full flex-col items-start border-b border-r border-gray-100 p-1.5 text-left transition-colors dark:border-gray-800',
         day.getDay() === 0 && 'border-r-0',
         !isCurrentMonth && 'opacity-30',
-        filterNurseId && !hasFilteredNurse && 'opacity-20',
+        dimmed && 'opacity-15',
         isSelected
           ? 'bg-blue-50 ring-2 ring-inset ring-blue-500 dark:bg-blue-950/30 dark:ring-blue-400'
           : isWeekend
@@ -129,7 +348,7 @@ function DayCell({ day, dayAssign, nurses, filterNurseId, isSelected, isCurrentM
     >
       {/* Numéro du jour */}
       <span className={clsx(
-        'mb-1 flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold',
+        'mb-1.5 flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold',
         todayFlag
           ? 'bg-blue-600 font-bold text-white'
           : isSelected
@@ -139,31 +358,28 @@ function DayCell({ day, dayAssign, nurses, filterNurseId, isSelected, isCurrentM
         {format(day, 'd')}
       </span>
 
-      {/* T1 / T2 / T3 */}
-      {TOURNEES.map((tournee, ti) => {
-        const assigns = dayAssign?.[tournee] ?? []
-        const visible = filterNurseId
-          ? assigns.filter((a) => a.infirmiere_id === filterNurseId)
-          : assigns.slice(0, 1)
-        const name = visible.length > 0
-          ? (nurseById(visible[0].infirmiere_id)?.firstName ?? '')
-          : ''
-        return (
-          <div key={tournee} className="flex w-full items-center gap-0.5 overflow-hidden">
-            <span className={clsx('w-4 flex-shrink-0 text-[8px] font-bold leading-none', TOURNEE_COLORS[ti])}>
-              {tournee}
-            </span>
-            <span className={clsx('truncate text-[9px] leading-tight', name ? 'text-gray-600 dark:text-gray-300' : 'text-gray-300 dark:text-gray-600')}>
-              {name || '—'}
-            </span>
-          </div>
-        )
-      })}
+      {/* Lignes colorées par infirmière */}
+      <div className="flex w-full flex-col gap-[3px]">
+        {visibleIds.map((id) => {
+          const nurse = nurseById(id)
+          if (!nurse) return null
+          return (
+            <div
+              key={id}
+              className="h-[3px] w-full rounded-full"
+              style={{ backgroundColor: nurse.colorHex }}
+            />
+          )
+        })}
+        {hasMore && (
+          <span className="text-[8px] leading-none text-gray-400 dark:text-gray-600">···</span>
+        )}
+      </div>
     </button>
   )
 }
 
-// ─── Sous-composant : ligne T1/T2/T3 dans le panneau ─────────────────────────
+// ─── Ligne tournée dans le panneau — badges toggle ────────────────────────────
 
 function TourneeRow({ tournee, assigns, nurses, onRemove, onAdd }: {
   tournee: Tournee
@@ -172,93 +388,50 @@ function TourneeRow({ tournee, assigns, nurses, onRemove, onAdd }: {
   onRemove: (a: Assignment) => void
   onAdd: (nurseId: string) => void
 }) {
-  const [open, setOpen] = useState(false)
-  const dropRef = useRef<HTMLDivElement>(null)
-  const nurseById = (id: string) => nurses.find((n) => n.id === id)
-  const available = nurses.filter((n) => !assigns.some((a) => a.infirmiere_id === n.id))
-
-  useEffect(() => {
-    if (!open) return
-    const handler = (e: MouseEvent) => {
-      if (dropRef.current && !dropRef.current.contains(e.target as Node)) setOpen(false)
-    }
-    document.addEventListener('mousedown', handler)
-    return () => document.removeEventListener('mousedown', handler)
-  }, [open])
-
-  const LABEL_CLS: Record<Tournee, string> = {
-    T1: 'text-navy-800 dark:text-navy-300',
-    T2: 'text-navy-800 dark:text-navy-300',
-    T3: 'text-navy-800 dark:text-navy-300',
+  const LABEL_COLOR: Record<Tournee, string> = {
+    T1: 'text-blue-700 dark:text-blue-400',
+    T2: 'text-violet-700 dark:text-violet-400',
+    T3: 'text-emerald-700 dark:text-emerald-400',
   }
 
   return (
-    <div className="flex items-start gap-4 border-b border-gray-100 px-5 py-4 last:border-0 dark:border-gray-800">
+    <div className="flex items-start gap-3 border-b border-gray-100 px-5 py-3.5 last:border-0 dark:border-gray-800">
       {/* Label tournée */}
-      <span className={clsx('w-8 flex-shrink-0 pt-0.5 text-sm font-bold', LABEL_CLS[tournee])}>
+      <span className={clsx('w-7 flex-shrink-0 pt-0.5 text-sm font-bold', LABEL_COLOR[tournee])}>
         {tournee}
       </span>
 
-      {/* Grille 2 colonnes des prénoms */}
-      <div className="flex-1">
-        {assigns.length > 0 ? (
-          <div className="grid grid-cols-2 gap-x-6 gap-y-2">
-            {assigns.map((a) => {
-              const nurse = nurseById(a.infirmiere_id)
-              if (!nurse) return null
-              return (
-                <button
-                  key={a.id}
-                  onClick={() => onRemove(a)}
-                  title={`Retirer ${nurse.firstName}`}
-                  className="group flex items-center gap-1.5 text-left text-sm font-medium transition-opacity hover:opacity-60"
-                  style={{ color: nurse.colorHex }}
-                >
-                  <span className={clsx('h-2 w-2 flex-shrink-0 rounded-full', nurse.colorCls)} />
-                  <span className="group-hover:line-through">{nurse.firstName}</span>
-                </button>
-              )
-            })}
-          </div>
-        ) : (
-          <span className="text-sm text-gray-400 dark:text-gray-500">Aucune infirmière</span>
-        )}
+      {/* Badges toggle pour chaque infirmière */}
+      <div className="flex flex-1 flex-wrap gap-1.5">
+        {nurses.map((n) => {
+          const assignment = assigns.find((a) => a.infirmiere_id === n.id)
+          const assigned   = !!assignment
+          return (
+            <button
+              key={n.id}
+              onClick={() => assigned ? onRemove(assignment!) : onAdd(n.id)}
+              className={clsx(
+                'inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold transition-all',
+                assigned ? 'text-white shadow-sm' : '',
+              )}
+              style={assigned
+                ? { backgroundColor: n.colorHex }
+                : { border: `1.5px solid ${n.colorHex}`, color: n.colorHex }
+              }
+            >
+              <span className="text-[10px] font-bold" style={{ opacity: assigned ? 0.75 : 1 }}>
+                {n.initials}
+              </span>
+              {n.firstName}
+            </button>
+          )
+        })}
       </div>
-
-      {/* Bouton + (dropdown) */}
-      {available.length > 0 && (
-        <div className="relative flex-shrink-0" ref={dropRef}>
-          <button
-            onClick={() => setOpen((v) => !v)}
-            className="flex h-7 w-7 items-center justify-center rounded-full border-2 border-dashed border-gray-300 text-gray-400 transition-colors hover:border-blue-500 hover:text-blue-500 dark:border-gray-600 dark:text-gray-500"
-            title="Ajouter une infirmière"
-          >
-            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-            </svg>
-          </button>
-
-          {open && (
-            <div className="absolute bottom-full right-0 z-50 mb-2 min-w-[172px] overflow-hidden rounded-xl border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-800">
-              {available.map((n) => (
-                <button
-                  key={n.id}
-                  onClick={() => { onAdd(n.id); setOpen(false) }}
-                  className="flex w-full items-center gap-2.5 px-4 py-2.5 text-left text-sm transition-colors hover:bg-gray-50 dark:hover:bg-gray-700"
-                >
-                  <span className={clsx('h-2.5 w-2.5 flex-shrink-0 rounded-full', n.colorCls)} />
-                  <span className="text-gray-700 dark:text-gray-200">{n.firstName} {n.lastName}</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
     </div>
   )
 }
 
-// ─── Sous-composant : contenu du panneau d'assignation ────────────────────────
+// ─── Panneau d'assignation ────────────────────────────────────────────────────
 
 function AssignmentPanel({ selectedDay, assignMap, nurses, onRemove, onAdd, onClose, showClose }: {
   selectedDay: Date
@@ -275,14 +448,14 @@ function AssignmentPanel({ selectedDay, assignMap, nurses, onRemove, onAdd, onCl
 
   return (
     <>
-      <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-800">
-        <h3 className="text-sm font-bold uppercase tracking-wider text-navy-900 dark:text-white">
+      <div className="flex items-center justify-between border-b border-gray-100 px-5 py-3.5 dark:border-gray-800">
+        <h3 className="text-sm font-bold uppercase tracking-wide text-navy-900 dark:text-white">
           {title}
         </h3>
         {showClose && onClose && (
           <button
             onClick={onClose}
-            className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
+            className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800"
           >
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
@@ -290,7 +463,6 @@ function AssignmentPanel({ selectedDay, assignMap, nurses, onRemove, onAdd, onCl
           </button>
         )}
       </div>
-
       <div>
         {TOURNEES.map((t) => (
           <TourneeRow
@@ -307,7 +479,7 @@ function AssignmentPanel({ selectedDay, assignMap, nurses, onRemove, onAdd, onCl
   )
 }
 
-// ─── Sous-composant : modal liste des infirmières ────────────────────────────
+// ─── Modal infirmières ────────────────────────────────────────────────────────
 
 function NursesModal({ nurses, onClose }: { nurses: Nurse[]; onClose: () => void }) {
   return (
@@ -316,33 +488,24 @@ function NursesModal({ nurses, onClose }: { nurses: Nurse[]; onClose: () => void
       <div className="relative z-10 w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900">
         <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-800">
           <h2 className="font-bold text-navy-900 dark:text-white">Infirmières du cabinet</h2>
-          <button
-            onClick={onClose}
-            className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
-          >
+          <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
             </svg>
           </button>
         </div>
-
-        <div className="max-h-72 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-800">
+        <div className="max-h-72 divide-y divide-gray-100 overflow-y-auto dark:divide-gray-800">
           {nurses.map((n) => (
             <div key={n.id} className="flex items-center gap-3 px-5 py-3">
               <div className={clsx('flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full text-xs font-bold text-white', n.colorCls)}>
                 {n.initials}
               </div>
-              <div>
-                <p className="text-sm font-semibold text-gray-900 dark:text-white">{n.firstName} {n.lastName}</p>
-              </div>
+              <p className="text-sm font-semibold text-gray-900 dark:text-white">{n.firstName} {n.lastName}</p>
             </div>
           ))}
         </div>
-
         <div className="border-t border-gray-100 px-5 py-3 text-center dark:border-gray-800">
-          <p className="text-xs text-gray-400 dark:text-gray-500">
-            Gérer les infirmières depuis la page Administration
-          </p>
+          <p className="text-xs text-gray-400">Gérer les infirmières depuis la page Administration</p>
         </div>
       </div>
     </div>
@@ -362,6 +525,7 @@ export default function PlanningPage() {
   const [assignments,     setAssignments]     = useState<Assignment[]>(DEMO_ASSIGNMENTS)
   const [filterNurseId,   setFilterNurseId]   = useState<string | null>(null)
   const [showNursesModal, setShowNursesModal] = useState(false)
+  const [showPdfModal,    setShowPdfModal]    = useState(false)
   const [isMobile,        setIsMobile]        = useState(() => window.innerWidth < 1024)
 
   useEffect(() => {
@@ -370,38 +534,25 @@ export default function PlanningPage() {
     return () => window.removeEventListener('resize', h)
   }, [])
 
-  // ── Chargement des infirmières du cabinet ──────────────────────────────────
   useEffect(() => {
     if (!cabinet?.id) return
-    supabase
-      .from('users')
-      .select('id, full_name')
-      .eq('cabinet_id', cabinet.id)
+    supabase.from('users').select('id, full_name').eq('cabinet_id', cabinet.id)
       .then(({ data, error }) => {
-        if (!error && data && data.length > 0) {
-          setNurses((data as { id: string; full_name: string }[]).map(makeNurse))
-        }
+        if (!error && data?.length) setNurses((data as { id: string; full_name: string }[]).map(makeNurse))
       })
   }, [cabinet?.id])
 
-  // ── Chargement des assignations du mois courant ───────────────────────────
   const monthKey = `${currentDate.getFullYear()}-${currentDate.getMonth()}`
   useEffect(() => {
     if (!cabinet?.id) return
-    const start = format(startOfMonth(currentDate), 'yyyy-MM-dd')
-    const end   = format(endOfMonth(currentDate),   'yyyy-MM-dd')
-    supabase
-      .from('planning_assignments')
+    supabase.from('planning_assignments')
       .select('id, infirmiere_id, date, tournee')
       .eq('cabinet_id', cabinet.id)
-      .gte('date', start)
-      .lte('date', end)
-      .then(({ data, error }) => {
-        if (!error && data) setAssignments(data as Assignment[])
-      })
+      .gte('date', format(startOfMonth(currentDate), 'yyyy-MM-dd'))
+      .lte('date', format(endOfMonth(currentDate),   'yyyy-MM-dd'))
+      .then(({ data, error }) => { if (!error && data) setAssignments(data as Assignment[]) })
   }, [cabinet?.id, monthKey]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Map dérivée date → tournée → assignments ──────────────────────────────
   const assignMap = useMemo<AssignMap>(() => {
     const map: AssignMap = {}
     for (const a of assignments) {
@@ -411,63 +562,47 @@ export default function PlanningPage() {
     return map
   }, [assignments])
 
-  // ── Jours du calendrier (grille complète lun → dim) ───────────────────────
   const days = useMemo(() => {
-    const start = startOfWeek(startOfMonth(currentDate), { weekStartsOn: 1 })
-    const end   = endOfWeek(endOfMonth(currentDate),     { weekStartsOn: 1 })
-    return eachDayOfInterval({ start, end })
+    const s = startOfWeek(startOfMonth(currentDate), { weekStartsOn: 1 })
+    const e = endOfWeek(endOfMonth(currentDate),     { weekStartsOn: 1 })
+    return eachDayOfInterval({ start: s, end: e })
   }, [currentDate])
 
-  // ── Clic sur un jour ──────────────────────────────────────────────────────
   const handleDayClick = (day: Date) => {
     setSelectedDay(day)
     if (isMobile) setPanelOpen(true)
   }
 
-  // ── Retirer une infirmière d'un slot ──────────────────────────────────────
   const handleRemove = async (a: Assignment) => {
     setAssignments((prev) => prev.filter((x) => x.id !== a.id))
     if (a.id.startsWith('d') || !cabinet?.id) return
     const { error } = await supabase.from('planning_assignments').delete().eq('id', a.id)
-    if (error) {
-      setAssignments((prev) => [...prev, a])
-      addToast('Erreur lors de la suppression', 'error')
-    }
+    if (error) { setAssignments((prev) => [...prev, a]); addToast('Erreur suppression', 'error') }
   }
 
-  // ── Ajouter une infirmière à un slot ──────────────────────────────────────
   const handleAdd = async (tournee: Tournee, nurseId: string) => {
     const dateStr = format(selectedDay, 'yyyy-MM-dd')
     const tempId  = `tmp-${Date.now()}`
-    const tempA: Assignment = { id: tempId, infirmiere_id: nurseId, date: dateStr, tournee }
-
-    setAssignments((prev) => [...prev, tempA])
+    setAssignments((prev) => [...prev, { id: tempId, infirmiere_id: nurseId, date: dateStr, tournee }])
     if (!cabinet?.id) return
-
     const { data, error } = await supabase
       .from('planning_assignments')
       .insert({ cabinet_id: cabinet.id, infirmiere_id: nurseId, date: dateStr, tournee })
-      .select('id, infirmiere_id, date, tournee')
-      .single()
-
+      .select('id, infirmiere_id, date, tournee').single()
     if (error) {
       setAssignments((prev) => prev.filter((x) => x.id !== tempId))
-      addToast("Erreur lors de l'ajout", 'error')
+      addToast("Erreur ajout", 'error')
     } else if (data) {
-      setAssignments((prev) => prev.map((x) => (x.id === tempId ? (data as Assignment) : x)))
+      setAssignments((prev) => prev.map((x) => x.id === tempId ? (data as Assignment) : x))
     }
   }
 
-  // ── Export PDF ────────────────────────────────────────────────────────────
-  const handlePdf = () => addToast('Export PDF bientôt disponible', 'info')
-
-  // ── Filtre par infirmière ─────────────────────────────────────────────────
-  const toggleFilter = (id: string) => setFilterNurseId((prev) => (prev === id ? null : id))
+  const toggleFilter = (id: string) => setFilterNurseId((prev) => prev === id ? null : id)
 
   return (
     <div className="flex flex-col gap-4 pb-24 lg:pb-4">
 
-      {/* ── Header ─────────────────────────────────────────────────────────── */}
+      {/* ── Header ── */}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-bold text-navy-900 dark:text-white">Calendrier Cabinet</h1>
         <div className="flex gap-2">
@@ -481,7 +616,7 @@ export default function PlanningPage() {
             Infirmières
           </button>
           <button
-            onClick={handlePdf}
+            onClick={() => setShowPdfModal(true)}
             className="inline-flex items-center gap-1.5 rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition-colors hover:bg-gray-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
@@ -492,7 +627,7 @@ export default function PlanningPage() {
         </div>
       </div>
 
-      {/* ── Badges infirmières (scrollable) ────────────────────────────────── */}
+      {/* ── Badges infirmières ── */}
       <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
         {nurses.map((n) => (
           <button
@@ -512,17 +647,17 @@ export default function PlanningPage() {
         {filterNurseId && (
           <button
             onClick={() => setFilterNurseId(null)}
-            className="inline-flex flex-shrink-0 items-center gap-1 rounded-full border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
+            className="inline-flex flex-shrink-0 items-center gap-1 rounded-full border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-500 hover:bg-gray-100 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
           >
             <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
             </svg>
-            Effacer filtre
+            Effacer
           </button>
         )}
       </div>
 
-      {/* ── Navigation mois ─────────────────────────────────────────────────── */}
+      {/* ── Navigation mois ── */}
       <div className="flex items-center justify-between rounded-2xl bg-white px-4 py-3 shadow-sm dark:bg-gray-900">
         <button
           onClick={() => setCurrentDate((d) => subMonths(d, 1))}
@@ -545,9 +680,8 @@ export default function PlanningPage() {
         </button>
       </div>
 
-      {/* ── Grille calendrier ───────────────────────────────────────────────── */}
+      {/* ── Grille calendrier ── */}
       <div className="overflow-hidden rounded-2xl bg-white shadow-sm dark:bg-gray-900">
-        {/* En-têtes jours */}
         <div className="grid grid-cols-7 border-b border-gray-100 dark:border-gray-800">
           {JOURS.map((j) => (
             <div key={j} className="py-2 text-center text-[10px] font-bold uppercase tracking-widest text-gray-400 dark:text-gray-500">
@@ -555,7 +689,6 @@ export default function PlanningPage() {
             </div>
           ))}
         </div>
-        {/* Cellules */}
         <div className="grid grid-cols-7">
           {days.map((day, idx) => (
             <DayCell
@@ -572,7 +705,7 @@ export default function PlanningPage() {
         </div>
       </div>
 
-      {/* ── Panneau desktop (fixe, sous le calendrier) ──────────────────────── */}
+      {/* ── Panneau desktop ── */}
       <div className="hidden overflow-hidden rounded-2xl bg-white shadow-sm dark:bg-gray-900 lg:block">
         <AssignmentPanel
           selectedDay={selectedDay}
@@ -583,8 +716,7 @@ export default function PlanningPage() {
         />
       </div>
 
-      {/* ── Sheet mobile ────────────────────────────────────────────────────── */}
-      {/* Overlay */}
+      {/* ── Sheet mobile — overlay ── */}
       <div
         className={clsx(
           'fixed inset-0 z-30 bg-black/30 transition-opacity duration-300 lg:hidden',
@@ -592,7 +724,7 @@ export default function PlanningPage() {
         )}
         onClick={() => setPanelOpen(false)}
       />
-      {/* Panel */}
+      {/* Sheet mobile — panneau */}
       <div
         className={clsx(
           'fixed inset-x-0 bottom-0 z-40 overflow-hidden rounded-t-2xl bg-white shadow-2xl dark:bg-gray-900 lg:hidden',
@@ -600,7 +732,6 @@ export default function PlanningPage() {
           panelOpen ? 'translate-y-0' : 'translate-y-full',
         )}
       >
-        {/* Handle */}
         <div className="flex justify-center py-2.5">
           <div className="h-1 w-10 rounded-full bg-gray-200 dark:bg-gray-700" />
         </div>
@@ -613,13 +744,18 @@ export default function PlanningPage() {
           onClose={() => setPanelOpen(false)}
           showClose
         />
-        {/* Safe area bas */}
-        <div className="h-safe pb-4" />
+        <div className="h-6" />
       </div>
 
-      {/* ── Modal infirmières ────────────────────────────────────────────────── */}
-      {showNursesModal && (
-        <NursesModal nurses={nurses} onClose={() => setShowNursesModal(false)} />
+      {/* ── Modals ── */}
+      {showNursesModal && <NursesModal nurses={nurses} onClose={() => setShowNursesModal(false)} />}
+      {showPdfModal && (
+        <PdfModal
+          currentDate={currentDate}
+          assignMap={assignMap}
+          nurses={nurses}
+          onClose={() => setShowPdfModal(false)}
+        />
       )}
     </div>
   )
