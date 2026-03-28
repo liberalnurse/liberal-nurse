@@ -304,9 +304,7 @@ function PdfModal({ currentDate, assignMap, nurses, onClose }: {
   )
 }
 
-// ─── Cellule calendrier — lignes colorées ─────────────────────────────────────
-
-const MAX_LINES = 4
+// ─── Cellule calendrier — T1/T2/T3 avec border-left colorée ──────────────────
 
 function DayCell({ day, dayAssign, nurses, filterNurseId, isSelected, isCurrentMonth, onClick }: {
   day: Date
@@ -321,21 +319,27 @@ function DayCell({ day, dayAssign, nurses, filterNurseId, isSelected, isCurrentM
   const isWeekend = day.getDay() === 0 || day.getDay() === 6
   const nurseById = (id: string) => nurses.find((n) => n.id === id)
 
-  // Unique nurses assigned this day (across all tournées)
-  const allIds = [...new Set(
-    TOURNEES.flatMap((t) => (dayAssign?.[t] ?? []).map((a) => a.infirmiere_id))
-  )]
-  const filteredIds = filterNurseId ? allIds.filter((id) => id === filterNurseId) : allIds
-  const visibleIds  = filteredIds.slice(0, MAX_LINES)
-  const hasMore     = filteredIds.length > MAX_LINES
+  // Pour le filtre : on vérifie si au moins une tournée contient l'infirmière filtrée
+  const hasFiltered = filterNurseId
+    ? TOURNEES.some((t) => (dayAssign?.[t] ?? []).some((a) => a.infirmiere_id === filterNurseId))
+    : true
+  const dimmed = filterNurseId && !hasFiltered
 
-  const dimmed = filterNurseId && filteredIds.length === 0
+  // Première infirmière assignée à une tournée (en tenant compte du filtre)
+  const firstForTournee = (t: Tournee): Nurse | null => {
+    const list = dayAssign?.[t] ?? []
+    const filtered = filterNurseId ? list.filter((a) => a.infirmiere_id === filterNurseId) : list
+    const first = filtered[0] ?? list[0]
+    if (!first) return null
+    if (filterNurseId && first.infirmiere_id !== filterNurseId) return null
+    return nurseById(first.infirmiere_id) ?? null
+  }
 
   return (
     <button
       onClick={onClick}
       className={clsx(
-        'relative flex min-h-[74px] w-full flex-col items-start border-b border-r border-gray-100 p-1.5 text-left transition-colors dark:border-gray-800',
+        'relative flex min-h-[84px] w-full flex-col items-start border-b border-r border-gray-100 p-1 text-left transition-colors dark:border-gray-800',
         day.getDay() === 0 && 'border-r-0',
         !isCurrentMonth && 'opacity-30',
         dimmed && 'opacity-15',
@@ -348,7 +352,7 @@ function DayCell({ day, dayAssign, nurses, filterNurseId, isSelected, isCurrentM
     >
       {/* Numéro du jour */}
       <span className={clsx(
-        'mb-1.5 flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold',
+        'mb-1 flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-semibold',
         todayFlag
           ? 'bg-blue-600 font-bold text-white'
           : isSelected
@@ -358,22 +362,29 @@ function DayCell({ day, dayAssign, nurses, filterNurseId, isSelected, isCurrentM
         {format(day, 'd')}
       </span>
 
-      {/* Lignes colorées par infirmière */}
+      {/* Lignes T1 / T2 / T3 */}
       <div className="flex w-full flex-col gap-[3px]">
-        {visibleIds.map((id) => {
-          const nurse = nurseById(id)
-          if (!nurse) return null
+        {TOURNEES.map((t) => {
+          const nurse = firstForTournee(t)
           return (
-            <div
-              key={id}
-              className="h-[3px] w-full rounded-full"
-              style={{ backgroundColor: nurse.colorHex }}
-            />
+            <div key={t} className="flex items-center gap-[3px] overflow-hidden">
+              {/* Trait coloré (border-left) */}
+              <div
+                className="h-[11px] w-[3px] flex-shrink-0 rounded-full"
+                style={{ backgroundColor: nurse ? nurse.colorHex : 'transparent' }}
+              />
+              {/* Texte : masqué sur mobile, visible sur desktop */}
+              <span className={clsx(
+                'hidden sm:block truncate text-[9px] leading-[11px] font-medium',
+                nurse
+                  ? 'text-gray-700 dark:text-gray-300'
+                  : 'text-gray-300 dark:text-gray-600',
+              )}>
+                {nurse ? `${t} · ${nurse.firstName}` : `${t} · —`}
+              </span>
+            </div>
           )
         })}
-        {hasMore && (
-          <span className="text-[8px] leading-none text-gray-400 dark:text-gray-600">···</span>
-        )}
       </div>
     </button>
   )
