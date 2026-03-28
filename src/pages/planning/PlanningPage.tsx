@@ -95,111 +95,212 @@ function buildDemoAssignments(): Assignment[] {
 
 const DEMO_ASSIGNMENTS = buildDemoAssignments()
 
-// ─── Exports PDF (lazy jsPDF) ─────────────────────────────────────────────────
+// ─── Export PDF — html2canvas + jsPDF ────────────────────────────────────────
 
-async function exportComplet(currentDate: Date, assignMap: AssignMap, nurses: Nurse[]) {
-  const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
+async function exportCalendarPdf(opts: {
+  currentDate: Date
+  assignMap: AssignMap
+  nurses: Nurse[]
+  cabinetName: string
+  filterNurse?: Nurse
+  filterTournee?: Tournee
+  filename: string
+}) {
+  const { currentDate, assignMap, nurses, cabinetName, filterNurse, filterTournee, filename } = opts
+  const today = new Date()
+  const mon   = format(currentDate, 'MMMM yyyy', { locale: fr })
+
+  const [{ default: html2canvas }, { default: jsPDF }] = await Promise.all([
+    import('html2canvas'),
     import('jspdf'),
-    import('jspdf-autotable'),
   ])
-  const doc  = new jsPDF({ orientation: 'landscape' })
-  const mon  = format(currentDate, 'MMMM yyyy', { locale: fr })
-  const days = eachDayOfInterval({ start: startOfMonth(currentDate), end: endOfMonth(currentDate) })
 
-  doc.setFontSize(14)
-  doc.setFont('helvetica', 'bold')
-  doc.text(`Planning Cabinet - ${mon}`, 14, 16)
+  // ── Conteneur hors-écran ──────────────────────────────────────────────────
+  const wrap = document.createElement('div')
+  wrap.style.cssText = [
+    'position:absolute', 'left:-9999px', 'top:0',
+    'width:1120px', 'background:white', 'font-family:system-ui,sans-serif',
+    'padding:28px', 'box-sizing:border-box',
+  ].join(';')
+  document.body.appendChild(wrap)
 
-  const rows = days.map((day) => {
-    const da = assignMap[format(day, 'yyyy-MM-dd')]
-    const names = (t: Tournee) =>
-      (da?.[t] ?? []).map((a) => nurses.find((n) => n.id === a.infirmiere_id)?.firstName ?? '').filter(Boolean).join(', ') || '-'
-    return [format(day, 'EEE d MMM', { locale: fr }), names('T1'), names('T2'), names('T3')]
-  })
+  // ── Header ────────────────────────────────────────────────────────────────
+  const sub = [
+    filterNurse  ? `${filterNurse.firstName} ${filterNurse.lastName}` : null,
+    filterTournee ?? null,
+  ].filter(Boolean).join(' · ')
 
-  autoTable(doc, {
-    head: [['Jour', 'T1', 'T2', 'T3']],
-    body: rows,
-    startY: 24,
-    styles: { fontSize: 8, cellPadding: 2 },
-    headStyles: { fillColor: [15, 45, 92], textColor: 255 },
-    alternateRowStyles: { fillColor: [245, 248, 255] },
-    columnStyles: { 0: { fontStyle: 'bold', cellWidth: 34 } },
-  })
-  doc.save(`planning-complet-${format(currentDate, 'yyyy-MM')}.pdf`)
-}
+  wrap.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;
+                margin-bottom:16px;padding-bottom:14px;border-bottom:2px solid #0f2d5c;">
+      <div>
+        <div style="font-size:10px;font-weight:700;color:#6b7280;text-transform:uppercase;
+                    letter-spacing:.08em;margin-bottom:3px;">Liberal Nurse</div>
+        <div style="font-size:22px;font-weight:800;color:#0f2d5c;text-transform:capitalize;
+                    line-height:1.1;">${mon}</div>
+        <div style="font-size:12px;color:#6b7280;margin-top:4px;">
+          Calendrier Cabinet${sub ? ` · ${sub}` : ''}
+        </div>
+      </div>
+      <div style="text-align:right;font-size:11px;color:#9ca3af;">
+        <div style="font-weight:700;color:#374151;font-size:12px;">${cabinetName}</div>
+        <div style="margin-top:2px;">Généré le ${format(today, 'd MMMM yyyy', { locale: fr })}</div>
+      </div>
+    </div>
+  `
 
-async function exportParInfirmiere(currentDate: Date, assignMap: AssignMap, nurse: Nurse) {
-  const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
-    import('jspdf'),
-    import('jspdf-autotable'),
-  ])
-  const doc  = new jsPDF()
-  const mon  = format(currentDate, 'MMMM yyyy', { locale: fr })
-  const days = eachDayOfInterval({ start: startOfMonth(currentDate), end: endOfMonth(currentDate) })
+  // ── Badges infirmières ────────────────────────────────────────────────────
+  const displayNurses = filterNurse ? [filterNurse] : nurses
+  const badgesEl = document.createElement('div')
+  badgesEl.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;'
+  for (const n of displayNurses) {
+    const b = document.createElement('span')
+    b.style.cssText = `display:inline-flex;align-items:center;gap:5px;padding:4px 12px;
+      border-radius:999px;background:${n.colorHex};color:white;
+      font-size:12px;font-weight:600;`
+    b.textContent = `${n.initials} ${n.firstName}`
+    badgesEl.appendChild(b)
+  }
+  wrap.appendChild(badgesEl)
 
-  doc.setFontSize(14)
-  doc.setFont('helvetica', 'bold')
-  doc.text(`Planning - ${nurse.firstName} ${nurse.lastName} - ${mon}`, 14, 16)
+  // ── Grille calendrier ─────────────────────────────────────────────────────
+  const gridEl = document.createElement('div')
+  gridEl.style.cssText = 'border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;'
 
-  const rows = days.flatMap((day) => {
-    const da = assignMap[format(day, 'yyyy-MM-dd')]
-    const ts = TOURNEES.filter((t) => da?.[t]?.some((a) => a.infirmiere_id === nurse.id))
-    return ts.map((t) => [format(day, 'EEE d MMM', { locale: fr }), t])
-  })
+  // En-têtes colonnes
+  const headRow = document.createElement('div')
+  headRow.style.cssText = 'display:grid;grid-template-columns:repeat(7,1fr);background:#f9fafb;border-bottom:1px solid #e5e7eb;'
+  for (const j of ['LUN','MAR','MER','JEU','VEN','SAM','DIM']) {
+    const c = document.createElement('div')
+    c.style.cssText = 'padding:7px 4px;text-align:center;font-size:9px;font-weight:800;color:#9ca3af;letter-spacing:.1em;'
+    c.textContent = j
+    headRow.appendChild(c)
+  }
+  gridEl.appendChild(headRow)
 
-  autoTable(doc, {
-    head: [['Jour', 'Tournee']],
-    body: rows.length ? rows : [['Aucune assignation', '']],
-    startY: 24,
-    styles: { fontSize: 9 },
-    headStyles: { fillColor: [15, 45, 92], textColor: 255 },
-    alternateRowStyles: { fillColor: [245, 248, 255] },
-  })
-  doc.save(`planning-${nurse.firstName.toLowerCase()}-${format(currentDate, 'yyyy-MM')}.pdf`)
-}
+  // Cellules
+  const cellsRow = document.createElement('div')
+  cellsRow.style.cssText = 'display:grid;grid-template-columns:repeat(7,1fr);'
 
-async function exportParTournee(currentDate: Date, assignMap: AssignMap, nurses: Nurse[], tournee: Tournee) {
-  const [{ default: jsPDF }, { default: autoTable }] = await Promise.all([
-    import('jspdf'),
-    import('jspdf-autotable'),
-  ])
-  const doc  = new jsPDF()
-  const mon  = format(currentDate, 'MMMM yyyy', { locale: fr })
-  const days = eachDayOfInterval({ start: startOfMonth(currentDate), end: endOfMonth(currentDate) })
+  const gridStart = startOfWeek(startOfMonth(currentDate), { weekStartsOn: 1 })
+  const gridEnd   = endOfWeek(endOfMonth(currentDate),     { weekStartsOn: 1 })
+  const gridDays  = eachDayOfInterval({ start: gridStart, end: gridEnd })
 
-  doc.setFontSize(14)
-  doc.setFont('helvetica', 'bold')
-  doc.text(`Planning ${tournee} - ${mon}`, 14, 16)
+  for (const day of gridDays) {
+    const dayKey    = format(day, 'yyyy-MM-dd')
+    const dayAssign = assignMap[dayKey]
+    const inMonth   = isSameMonth(day, currentDate)
+    const todayDay  = isSameDay(day, today)
+    const weekend   = day.getDay() === 0 || day.getDay() === 6
+    const lastCol   = day.getDay() === 0
 
-  const rows = days.map((day) => {
-    const as = assignMap[format(day, 'yyyy-MM-dd')]?.[tournee] ?? []
-    const nms = as.map((a) => nurses.find((n) => n.id === a.infirmiere_id)?.firstName ?? '').filter(Boolean).join(', ')
-    return [format(day, 'EEE d MMM', { locale: fr }), nms || '-']
-  })
+    const cell = document.createElement('div')
+    cell.style.cssText = [
+      'padding:5px 4px', 'min-height:78px', 'box-sizing:border-box',
+      `border-right:${lastCol ? 'none' : '1px solid #e5e7eb'}`,
+      'border-bottom:1px solid #e5e7eb',
+      `opacity:${inMonth ? 1 : 0.28}`,
+      `background:${weekend ? '#f9fafb' : 'white'}`,
+    ].join(';')
 
-  autoTable(doc, {
-    head: [['Jour', 'Infirmieres']],
-    body: rows,
-    startY: 24,
-    styles: { fontSize: 9 },
-    headStyles: { fillColor: [15, 45, 92], textColor: 255 },
-    alternateRowStyles: { fillColor: [245, 248, 255] },
-  })
-  doc.save(`planning-${tournee.toLowerCase()}-${format(currentDate, 'yyyy-MM')}.pdf`)
+    // Numéro du jour
+    const numEl = document.createElement('div')
+    numEl.style.cssText = [
+      'display:inline-flex', 'align-items:center', 'justify-content:center',
+      'width:20px', 'height:20px', 'border-radius:50%',
+      'font-size:10px', 'font-weight:700', 'margin-bottom:4px',
+      todayDay ? 'background:#2563eb;color:white' : 'color:#6b7280',
+    ].join(';')
+    numEl.textContent = format(day, 'd')
+    cell.appendChild(numEl)
+
+    // Lignes tournées
+    const showTournees: Tournee[] = filterTournee ? [filterTournee] : ['T1','T2','T3']
+    for (const t of showTournees) {
+      const list     = dayAssign?.[t] ?? []
+      const filtered = filterNurse ? list.filter((a) => a.infirmiere_id === filterNurse.id) : list
+      const first    = filtered[0]
+      const nurse    = first ? nurses.find((n) => n.id === first.infirmiere_id) : null
+
+      const row = document.createElement('div')
+      row.style.cssText = 'display:flex;align-items:center;gap:3px;margin-bottom:2px;'
+
+      const bar = document.createElement('div')
+      bar.style.cssText = `width:3px;height:12px;border-radius:2px;flex-shrink:0;background:${nurse ? nurse.colorHex : 'transparent'};`
+
+      const lbl = document.createElement('span')
+      lbl.style.cssText = `font-size:9px;font-weight:500;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;color:${nurse ? '#374151' : '#d1d5db'};`
+      lbl.textContent = nurse ? `${t} · ${nurse.firstName}` : `${t} · —`
+
+      row.appendChild(bar)
+      row.appendChild(lbl)
+      cell.appendChild(row)
+    }
+
+    cellsRow.appendChild(cell)
+  }
+
+  gridEl.appendChild(cellsRow)
+  wrap.appendChild(gridEl)
+
+  // ── Footer ────────────────────────────────────────────────────────────────
+  const footer = document.createElement('div')
+  footer.style.cssText = 'margin-top:12px;text-align:center;font-size:10px;color:#9ca3af;'
+  footer.textContent   = `${cabinetName} · Liberal Nurse · ${format(today, 'd MMMM yyyy', { locale: fr })}`
+  wrap.appendChild(footer)
+
+  // ── Capture + PDF ─────────────────────────────────────────────────────────
+  try {
+    const canvas = await html2canvas(wrap, {
+      scale: 2,
+      useCORS: true,
+      backgroundColor: '#ffffff',
+      logging: false,
+    })
+
+    const imgData = canvas.toDataURL('image/png')
+    const pdf     = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+    const pdfW    = pdf.internal.pageSize.getWidth()
+    const pdfH    = pdf.internal.pageSize.getHeight()
+    const ratio   = canvas.height / canvas.width
+    const imgH    = pdfW * ratio
+
+    if (imgH <= pdfH) {
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfW, imgH)
+    } else {
+      // Découpe en pages si trop haut
+      const sliceHeightPx = Math.floor((pdfH / pdfW) * canvas.width)
+      let offsetY = 0
+      while (offsetY < canvas.height) {
+        const h    = Math.min(sliceHeightPx, canvas.height - offsetY)
+        const sc   = document.createElement('canvas')
+        sc.width   = canvas.width
+        sc.height  = h
+        sc.getContext('2d')!.drawImage(canvas, 0, -offsetY)
+        if (offsetY > 0) pdf.addPage()
+        pdf.addImage(sc.toDataURL('image/png'), 'PNG', 0, 0, pdfW, h * (pdfW / canvas.width))
+        offsetY += h
+      }
+    }
+
+    pdf.save(filename)
+  } finally {
+    document.body.removeChild(wrap)
+  }
 }
 
 // ─── Modal PDF ────────────────────────────────────────────────────────────────
 
-function PdfModal({ currentDate, assignMap, nurses, onClose }: {
+function PdfModal({ currentDate, assignMap, nurses, cabinetName, onClose }: {
   currentDate: Date
   assignMap: AssignMap
   nurses: Nurse[]
+  cabinetName: string
   onClose: () => void
 }) {
-  const [nurseId,  setNurseId]  = useState(nurses[0]?.id ?? '')
-  const [tournee,  setTournee]  = useState<Tournee>('T1')
-  const [loading,  setLoading]  = useState<string | null>(null)
+  const [nurseId, setNurseId] = useState(nurses[0]?.id ?? '')
+  const [tournee, setTournee] = useState<Tournee>('T1')
+  const [loading, setLoading] = useState<string | null>(null)
 
   const run = async (key: string, fn: () => Promise<void>) => {
     setLoading(key)
@@ -208,6 +309,9 @@ function PdfModal({ currentDate, assignMap, nurses, onClose }: {
   }
 
   const nurse = nurses.find((n) => n.id === nurseId) ?? nurses[0]
+  const mon   = format(currentDate, 'yyyy-MM')
+
+  const baseOpts = { currentDate, assignMap, nurses, cabinetName }
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center p-4 sm:items-center">
@@ -215,7 +319,10 @@ function PdfModal({ currentDate, assignMap, nurses, onClose }: {
       <div className="relative z-10 w-full max-w-sm overflow-hidden rounded-2xl bg-white shadow-2xl dark:bg-gray-900">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-gray-100 px-5 py-4 dark:border-gray-800">
-          <h2 className="font-bold text-navy-900 dark:text-white">Export PDF</h2>
+          <div>
+            <h2 className="font-bold text-navy-900 dark:text-white">Export PDF</h2>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Rendu visuel exact du calendrier</p>
+          </div>
           <button onClick={onClose} className="rounded-lg p-1.5 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
@@ -231,11 +338,16 @@ function PdfModal({ currentDate, assignMap, nurses, onClose }: {
               <p className="text-xs text-gray-500 dark:text-gray-400">Tout le mois · toutes les infirmières</p>
             </div>
             <button
-              onClick={() => run('complet', () => exportComplet(currentDate, assignMap, nurses))}
+              onClick={() => run('complet', () => exportCalendarPdf({ ...baseOpts, filename: `planning-complet-${mon}.pdf` }))}
               disabled={loading === 'complet'}
               className="inline-flex items-center gap-1.5 rounded-xl bg-navy-800 px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50 dark:bg-navy-600"
             >
-              {loading === 'complet' ? '...' : (
+              {loading === 'complet' ? (
+                <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+                </svg>
+              ) : (
                 <>
                   <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
@@ -247,7 +359,7 @@ function PdfModal({ currentDate, assignMap, nurses, onClose }: {
           </div>
 
           {/* Par infirmière */}
-          <div className="px-5 py-4 space-y-2">
+          <div className="space-y-2 px-5 py-4">
             <p className="text-sm font-semibold text-gray-900 dark:text-white">Par infirmière</p>
             <div className="flex items-center gap-2">
               <select
@@ -260,7 +372,11 @@ function PdfModal({ currentDate, assignMap, nurses, onClose }: {
                 ))}
               </select>
               <button
-                onClick={() => nurse && run('inf', () => exportParInfirmiere(currentDate, assignMap, nurse))}
+                onClick={() => nurse && run('inf', () => exportCalendarPdf({
+                  ...baseOpts,
+                  filterNurse: nurse,
+                  filename: `planning-${nurse.firstName.toLowerCase()}-${mon}.pdf`,
+                }))}
                 disabled={loading === 'inf' || !nurse}
                 className="inline-flex items-center gap-1.5 rounded-xl bg-navy-800 px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50 dark:bg-navy-600"
               >
@@ -270,7 +386,7 @@ function PdfModal({ currentDate, assignMap, nurses, onClose }: {
           </div>
 
           {/* Par tournée */}
-          <div className="px-5 py-4 space-y-2">
+          <div className="space-y-2 px-5 py-4">
             <p className="text-sm font-semibold text-gray-900 dark:text-white">Par tournée</p>
             <div className="flex items-center gap-2">
               <div className="flex gap-1">
@@ -290,7 +406,11 @@ function PdfModal({ currentDate, assignMap, nurses, onClose }: {
                 ))}
               </div>
               <button
-                onClick={() => run('t', () => exportParTournee(currentDate, assignMap, nurses, tournee))}
+                onClick={() => run('t', () => exportCalendarPdf({
+                  ...baseOpts,
+                  filterTournee: tournee,
+                  filename: `planning-${tournee.toLowerCase()}-${mon}.pdf`,
+                }))}
                 disabled={loading === 't'}
                 className="ml-auto inline-flex items-center gap-1.5 rounded-xl bg-navy-800 px-3 py-1.5 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-50 dark:bg-navy-600"
               >
@@ -765,6 +885,7 @@ export default function PlanningPage() {
           currentDate={currentDate}
           assignMap={assignMap}
           nurses={nurses}
+          cabinetName={cabinet?.name ?? 'Cabinet'}
           onClose={() => setShowPdfModal(false)}
         />
       )}
