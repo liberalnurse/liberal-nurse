@@ -9,7 +9,32 @@
       "Bash(node:*)",
       "Bash(brew --version)",
       "Bash(git init:*)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(brew install:*)",
+      "Bash(sudo npm:*)",
+      "Bash(gh --version)",
+      "Bash(gh auth:*)",
+      "Bash(netlify --version)",
+      "Read(//usr/local/bin/**)",
+      "Read(//opt/homebrew/bin/**)",
+      "Bash(gh repo:*)",
+      "Bash(netlify status:*)",
+      "Bash(NETLIFY_AUTH_TOKEN=nfp_w2S24SVHawkcYgnkabBBVC6w53F8qYXg7d36 netlify status 2>&1)",
+      "Bash(NETLIFY_AUTH_TOKEN=nfp_w2S24SVHawkcYgnkabBBVC6w53F8qYXg7d36 netlify sites:create --name liberal-nurse-app --account-slug liberal-nurse 2>&1)",
+      "Bash(NETLIFY_AUTH_TOKEN=nfp_w2S24SVHawkcYgnkabBBVC6w53F8qYXg7d36 netlify sites:list 2>&1)",
+      "Bash(NETLIFY_AUTH_TOKEN=nfp_w2S24SVHawkcYgnkabBBVC6w53F8qYXg7d36 curl -s https://api.netlify.com/api/v1/accounts -H \"Authorization: Bearer nfp_w2S24SVHawkcYgnkabBBVC6w53F8qYXg7d36\")",
+      "Bash(NETLIFY_AUTH_TOKEN=nfp_w2S24SVHawkcYgnkabBBVC6w53F8qYXg7d36 netlify sites:create --name liberal-nurse-app --account-slug mathieu-pagne 2>&1)",
+      "Bash(export NETLIFY_AUTH_TOKEN=nfp_w2S24SVHawkcYgnkabBBVC6w53F8qYXg7d36)",
+      "Bash(netlify env:set VITE_SUPABASE_URL \"https://ldeaqajkbpenudcsbpdb.supabase.co\" --site-id fda14ffb-5e2d-431a-b0d6-622059071353)",
+      "Bash(netlify env:set VITE_SUPABASE_ANON_KEY \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxkZWFxYWprYnBlbnVkY3NicGRiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzMDk4NzIsImV4cCI6MjA4OTg4NTg3Mn0.cPi8cY5CJQCmy9Aevb2IVcjWTc4ayg12HNAgFZ9I1gc\" --site-id fda14ffb-5e2d-431a-b0d6-622059071353)",
+      "Bash(netlify env:set VITE_STRIPE_PUBLISHABLE_KEY \"pk_test_placeholder\" --site-id fda14ffb-5e2d-431a-b0d6-622059071353)",
+      "Bash(netlify env:set VITE_GOOGLE_MAPS_API_KEY \"placeholder_maps_key\" --site-id fda14ffb-5e2d-431a-b0d6-622059071353)",
+      "Bash(netlify env:set VITE_SUPABASE_URL \"https://ldeaqajkbpenudcsbpdb.supabase.co\")",
+      "Bash(netlify env:set VITE_SUPABASE_ANON_KEY \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxkZWFxYWprYnBlbnVkY3NicGRiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQzMDk4NzIsImV4cCI6MjA4OTg4NTg3Mn0.cPi8cY5CJQCmy9Aevb2IVcjWTc4ayg12HNAgFZ9I1gc\")",
+      "Bash(netlify env:set VITE_STRIPE_PUBLISHABLE_KEY \"pk_test_placeholder\")",
+      "Bash(netlify env:set VITE_GOOGLE_MAPS_API_KEY \"placeholder_maps_key\")",
+      "Bash(netlify deploy:*)"
     ]
   }
 }

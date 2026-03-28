@@ -32,3 +32,6 @@ vite.config.ts.timestamp-*
 
 # PWA
 dev-dist/
+
+# Local Netlify folder
+.netlify

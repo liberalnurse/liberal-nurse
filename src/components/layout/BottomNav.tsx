@@ -5,13 +5,13 @@ import { NAV_ITEMS } from './navItems'
 import { NavIcon } from './NavIcon'
 
 export function BottomNav() {
-  const { canAccess } = useRole()
+  const { role, canAccess } = useRole()
   const location = useLocation()
 
   const mobileItems = NAV_ITEMS
-    .filter((item) => item.mobileOrder !== undefined && canAccess(item.module))
+    .filter((item) => item.mobileOrder !== undefined && (!role || canAccess(item.module)))
     .sort((a, b) => (a.mobileOrder ?? 99) - (b.mobileOrder ?? 99))
-    .slice(0, 5)
+    .slice(0, 6)
 
   if (mobileItems.length === 0) return null
 
@@ -24,6 +24,7 @@ export function BottomNav() {
       <ul className="flex h-16 items-stretch">
         {mobileItems.map((item) => {
           const isActive = location.pathname.startsWith(item.path)
+          const label = item.shortLabel ?? item.label.split(' ')[0]
           return (
             <li key={item.key} className="flex flex-1">
               <NavLink
@@ -46,7 +47,7 @@ export function BottomNav() {
                     isActive ? 'text-navy-800 dark:text-accent-400' : 'text-gray-400 dark:text-gray-500'
                   )}
                 />
-                <span className="leading-none truncate">{item.label.split(' ')[0]}</span>
+                <span className="leading-none truncate">{label}</span>
               </NavLink>
             </li>
           )

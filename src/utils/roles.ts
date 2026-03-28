@@ -85,6 +85,7 @@ export const PERMISSIONS: PermissionMatrix = {
     sms: ['read', 'write'],
     messagerie: ['read', 'write'],
     notifications: ['read'],
+    securite: ['read'],
     stock: ['read', 'write'],
     fiches: ['read', 'write'],
   },
@@ -97,6 +98,7 @@ export const PERMISSIONS: PermissionMatrix = {
     transmissions: ['read', 'write'],
     messagerie: ['read', 'write'],
     notifications: ['read'],
+    securite: ['read'],
     fiches: ['read', 'write'],
   },
   stagiaire: {
@@ -107,6 +109,7 @@ export const PERMISSIONS: PermissionMatrix = {
     soins: ['read'],
     transmissions: ['read'],
     notifications: ['read'],
+    securite: ['read'],
     fiches: ['read'],
   },
   coordinatrice_had: {
@@ -117,6 +120,7 @@ export const PERMISSIONS: PermissionMatrix = {
     transmissions: ['read', 'write'],
     messagerie: ['read', 'write'],
     notifications: ['read'],
+    securite: ['read'],
     fiches: ['read', 'write'],
   },
   secretaire: {
@@ -127,11 +131,13 @@ export const PERMISSIONS: PermissionMatrix = {
     messagerie: ['read', 'write'],
     secretaire: ['read', 'write'],
     notifications: ['read'],
+    securite: ['read'],
   },
   medecin_partenaire: {
     patients: ['read'],
     soins: ['read'],
     transmissions: ['read'],
+    securite: ['read'],
     fiches: ['read'],
   },
 }
